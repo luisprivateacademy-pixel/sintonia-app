@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import Logo from "@/components/Logo";
 import LogoutButton from "@/components/LogoutButton";
 import VincularPsicologa from "@/components/VincularPsicologa";
+import EntrarSessaoButton from "@/components/EntrarSessaoButton";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,16 @@ export default async function PacientePage() {
       .maybeSingle();
     psicologa = data;
   }
+
+  // Verifica se tem sessao em andamento
+  const { data: sessaoAtiva } = await supabase
+    .from("sessoes")
+    .select("*")
+    .eq("paciente_id", user.id)
+    .eq("status", "em_andamento")
+    .order("iniciada_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   const primeiroNome = profile.nome_completo.split(" ")[0];
 
@@ -89,19 +100,16 @@ export default async function PacientePage() {
                 </div>
               </div>
 
-              <div className="bg-lavender-200/20 rounded-xl p-4 mb-4">
-                <p className="text-sm italic text-lavender-700">
-                  Nenhuma sessao agendada. Sua psicologa vai agendar quando
-                  estiverem prontos.
-                </p>
-              </div>
-
-              <button
-                disabled
-                className="w-full py-4 rounded-xl opacity-50 cursor-not-allowed bg-lavender-300 text-cream"
-              >
-                Entrar na sessao (em breve)
-              </button>
+              {sessaoAtiva ? (
+                <EntrarSessaoButton sessaoId={sessaoAtiva.id} />
+              ) : (
+                <div className="bg-lavender-200/20 rounded-xl p-4">
+                  <p className="text-sm italic text-lavender-700">
+                    Nenhuma sessao em andamento. Quando sua psicologa iniciar uma
+                    sessao, voce verah um botao aqui para entrar.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-4">
