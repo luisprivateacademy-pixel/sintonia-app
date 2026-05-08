@@ -46,6 +46,8 @@ export default function SessaoVivo({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const transcricoesRef = useRef<string[]>([]);
+  const carregandoResumoRef = useRef<boolean>(false);
 
   const [conectado, setConectado] = useState(false);
   const [tempo, setTempo] = useState(0);
@@ -57,6 +59,11 @@ export default function SessaoVivo({
   const [carregandoResumo, setCarregandoResumo] = useState(false);
   const [notas, setNotas] = useState("");
   const [salvandoNotas, setSalvandoNotas] = useState(false);
+
+  // Mantem ref atualizada com array de transcricoes
+  useEffect(() => {
+    transcricoesRef.current = transcricoes;
+  }, [transcricoes]);
 
   useEffect(() => {
     if (!roomUrl || !token) return;
@@ -99,15 +106,16 @@ export default function SessaoVivo({
   }, [conectado]);
 
   // Gera resumo a cada 60 segundos enquanto sessao roda
+  // CORRECAO: timer fixo, nao reseta com novas transcricoes
   useEffect(() => {
     if (!conectado) return;
     const interval = setInterval(() => {
-      if (transcricoes.length > 0) {
+      if (transcricoesRef.current.length > 0 && !carregandoResumoRef.current) {
         gerarResumo();
       }
     }, 60000);
     return () => clearInterval(interval);
-  }, [conectado, transcricoes.length]);
+  }, [conectado]);
 
   function iniciarGravacaoLocal() {
     navigator.mediaDevices
@@ -141,14 +149,12 @@ export default function SessaoVivo({
       if (blob.size > 1000) {
         await enviarAudio(blob);
       }
-      // Continua gravando o proximo chunk
       if (stream.active) {
         gravarChunk(stream);
       }
     };
 
     recorder.start();
-    // Para depois de 30 segundos pra enviar e iniciar novo
     setTimeout(() => {
       if (recorder.state === "recording") {
         recorder.stop();
@@ -157,7 +163,10 @@ export default function SessaoVivo({
   }
 
   function pararGravacao() {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state === "recording"
+    ) {
       mediaRecorderRef.current.stop();
     }
     if (audioStreamRef.current) {
@@ -188,7 +197,8 @@ export default function SessaoVivo({
   }
 
   async function gerarResumo() {
-    if (carregandoResumo) return;
+    if (carregandoResumoRef.current) return;
+    carregandoResumoRef.current = true;
     setCarregandoResumo(true);
     try {
       const resp = await fetch("/api/sessoes/resumir", {
@@ -203,6 +213,7 @@ export default function SessaoVivo({
     } catch (err) {
       console.error("Erro ao gerar resumo:", err);
     }
+    carregandoResumoRef.current = false;
     setCarregandoResumo(false);
   }
 
@@ -221,21 +232,19 @@ export default function SessaoVivo({
   }
 
   async function encerrar() {
-    if (!confirm("Encerrar sessao? O resumo e transcricao ficam salvos.")) return;
+    if (!confirm("Encerrar sessao? O resumo e transcricao ficam salvos."))
+      return;
 
     pararGravacao();
 
-    // Gera resumo final
-    if (transcricoes.length > 0) {
+    if (transcricoesRef.current.length > 0) {
       await gerarResumo();
     }
 
-    // Salva notas finais
     if (notas) {
       await salvarNotas();
     }
 
-    // Encerra sessao
     await fetch("/api/sessoes/encerrar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -356,7 +365,11 @@ export default function SessaoVivo({
           <div className="flex border-b border-purple-200/30">
             {[
               { id: "resumo" as const, label: "Resumo IA", icone: Sparkles },
-              { id: "transcricao" as const, label: "Transcricao", icone: FileText },
+              {
+                id: "transcricao" as const,
+                label: "Transcricao",
+                icone: FileText,
+              },
               { id: "notas" as const, label: "Notas", icone: Edit3 },
             ].map((t) => {
               const Icon = t.icone;
@@ -457,7 +470,7 @@ export default function SessaoVivo({
                               }}
                             >
                               <div className="text-[9px] uppercase tracking-wider mb-1 text-purple-700">
-                                {ins.tipo} · {ins.confianca}% confianca
+                                {ins.tipo} - {ins.confianca}% confianca
                               </div>
                               <div className="text-xs text-purple-900">
                                 {ins.texto}
@@ -491,7 +504,10 @@ export default function SessaoVivo({
                   </div>
                 ) : (
                   transcricoes.map((t, i) => (
-                    <div key={i} className="text-sm text-purple-900 leading-relaxed">
+                    <div
+                      key={i}
+                      className="text-sm text-purple-900 leading-relaxed"
+                    >
                       {t}
                     </div>
                   ))
