@@ -28,7 +28,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Confirma que a sessao eh dele
     const { data: sessao } = await supabase
       .from("sessoes")
       .select("id, psicologa_id")
@@ -43,7 +42,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Manda audio pro Groq Whisper
     const groqApiKey = process.env.GROQ_API_KEY;
     if (!groqApiKey) {
       return NextResponse.json(
@@ -52,11 +50,30 @@ export async function POST(request: Request) {
       );
     }
 
+    // Pega ultima transcricao pra usar como contexto
+    const { data: ultimasTrans } = await supabase
+      .from("transcricoes")
+      .select("conteudo")
+      .eq("sessao_id", sessao_id)
+      .order("timestamp_segundos", { ascending: false })
+      .limit(1);
+
+    const contextoAnterior =
+      ultimasTrans && ultimasTrans.length > 0 ? ultimasTrans[0].conteudo : "";
+
+    // Prompt de contexto pra Whisper - evita alucinacao e melhora qualidade
+    const promptContexto =
+      "Sessao de psicoterapia em portugues brasileiro entre psicologa e paciente. Conversa profissional e respeitosa sobre saude mental, emocoes, comportamentos e historia pessoal. " +
+      (contextoAnterior ? "Contexto anterior: " + contextoAnterior : "");
+
     const groqForm = new FormData();
     groqForm.append("file", audio);
-    groqForm.append("model", "whisper-large-v3-turbo");
+    // Modelo de qualidade superior (nao-turbo)
+    groqForm.append("model", "whisper-large-v3");
     groqForm.append("language", "pt");
     groqForm.append("response_format", "json");
+    groqForm.append("temperature", "0");
+    groqForm.append("prompt", promptContexto.substring(0, 224));
 
     const groqResp = await fetch(
       "https://api.groq.com/openai/v1/audio/transcriptions",
@@ -84,11 +101,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ texto: "", salvo: false });
     }
 
-    // Salva transcricao no banco
+    // Filtra alucinacoes comuns do Whisper em silencio
+    const alucinacoesComuns = [
+      "obrigado",
+      "obrigada",
+      "muito obrigado",
+      "muito obrigada",
+      "valeu",
+      "tchau",
+      "ate logo",
+      "bom dia",
+      "boa tarde",
+      "boa noite",
+      "ola pessoal",
+      "ola",
+      "e ai",
+      "...",
+    ];
+
+    const textoLower = text.trim().toLowerCase().replace(/\./g, "").trim();
+    const ehAlucinacao = alucinacoesComuns.some(
+      (a) => textoLower === a || textoLower === a + "."
+    );
+
+    if (ehAlucinacao) {
+      return NextResponse.json({ texto: "", salvo: false });
+    }
+
     await supabase.from("transcricoes").insert({
       sessao_id,
       conteudo: text,
-      falante: "paciente", // Por enquanto generico, a separacao seria mais complexa
+      falante: "paciente",
       timestamp_segundos,
     });
 
