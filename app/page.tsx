@@ -7,16 +7,40 @@ export default async function Home() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
+  if (!user) redirect("/auth/login");
 
-    if (profile?.role === "psicologa") redirect("/dashboard");
-    redirect("/paciente");
+  // Tenta buscar o profile
+  let { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  // Se não existe, cria agora (caso a trigger tenha falhado)
+  if (!profile) {
+    const meta = user.user_metadata || {};
+    const role = meta.role === "psicologa" ? "psicologa" : "paciente";
+    const nomeCompleto =
+      meta.nome_completo || user.email?.split("@")[0] || "Usuário";
+
+    const { error } = await supabase.from("profiles").insert({
+      id: user.id,
+      email: user.email,
+      nome_completo: nomeCompleto,
+      role: role,
+      aceite_lgpd: meta.aceite_lgpd === true,
+      aceite_lgpd_em: meta.aceite_lgpd === true ? new Date().toISOString() : null,
+    });
+
+    if (error) {
+      console.error("Erro ao criar profile:", error);
+      // Se falhou criar, manda pro login pra fazer logout e tentar de novo
+      redirect("/auth/login?error=profile");
+    }
+
+    profile = { role };
   }
 
-  redirect("/auth/login");
+  if (profile.role === "psicologa") redirect("/dashboard");
+  redirect("/paciente");
 }
