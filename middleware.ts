@@ -25,27 +25,8 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const path = request.nextUrl.pathname;
-  const isAuthPage = path.startsWith("/auth");
-  const isPublic = path === "/" || isAuthPage;
-
-  // Se não está logado e tenta acessar página privada, manda pro login
-  if (!user && !isPublic) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/auth/login";
-    return NextResponse.redirect(url);
-  }
-
-  // Se está logado e tenta entrar em login/cadastro, manda pra home (que decide pra onde ir)
-  if (user && (path === "/auth/login" || path === "/auth/cadastro")) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
-  }
+  // Apenas atualiza a sessao, sem fazer redirects
+  await supabase.auth.getUser();
 
   return response;
 }
