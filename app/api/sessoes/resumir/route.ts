@@ -122,9 +122,15 @@ Use linguagem clinica respeitosa.`;
     const claudeData = await claudeResp.json();
     const respostaTexto = claudeData.content[0].text;
 
-    let resumoJson;
+   let resumoJson;
     try {
-      resumoJson = JSON.parse(respostaTexto);
+      // Remove markdown code blocks se houver
+      let textoLimpo = respostaTexto.trim();
+      textoLimpo = textoLimpo.replace(/^```json\s*/i, "");
+      textoLimpo = textoLimpo.replace(/^```\s*/i, "");
+      textoLimpo = textoLimpo.replace(/\s*```$/i, "");
+      textoLimpo = textoLimpo.trim();
+      resumoJson = JSON.parse(textoLimpo);
     } catch (e) {
       console.error("Erro parse JSON:", respostaTexto);
       return NextResponse.json(
