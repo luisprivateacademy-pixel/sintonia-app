@@ -1,0 +1,58 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Lora", serif;
+  color: #3d2a4d;
+  background: linear-gradient(135deg, #f5f0ea 0%, #ebe2e8 50%, #d4c2dc 100%);
+  min-height: 100vh;
+}
+
+input,
+textarea,
+select {
+  font-family: "Lora", serif;
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: #7a5d8e !important;
+  box-shadow: 0 0 0 3px rgba(167, 139, 202, 0.2);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(167, 139, 202, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 202, 0.5);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out;
+}
