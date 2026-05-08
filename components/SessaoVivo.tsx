@@ -43,11 +43,20 @@ export default function SessaoVivo({
   const router = useRouter();
   const videoRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<DailyCall | null>(null);
+
+  // Audio mixing refs
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const destinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const localMicStreamRef = useRef<MediaStream | null>(null);
+  const remoteSourcesRef = useRef<Map<string, MediaStreamAudioSourceNode>>(
+    new Map()
+  );
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const audioStreamRef = useRef<MediaStream | null>(null);
   const transcricoesRef = useRef<string[]>([]);
   const carregandoResumoRef = useRef<boolean>(false);
+  const tempoRef = useRef<number>(0);
 
   const [conectado, setConectado] = useState(false);
   const [tempo, setTempo] = useState(0);
@@ -60,10 +69,13 @@ export default function SessaoVivo({
   const [notas, setNotas] = useState("");
   const [salvandoNotas, setSalvandoNotas] = useState(false);
 
-  // Mantem ref atualizada com array de transcricoes
   useEffect(() => {
     transcricoesRef.current = transcricoes;
   }, [transcricoes]);
+
+  useEffect(() => {
+    tempoRef.current = tempo;
+  }, [tempo]);
 
   useEffect(() => {
     if (!roomUrl || !token) return;
@@ -81,20 +93,33 @@ export default function SessaoVivo({
 
     callRef.current = call;
 
-    call.on("joined-meeting", () => {
+    call.on("joined-meeting", async () => {
       setConectado(true);
-      iniciarGravacaoLocal();
+      await iniciarMixagemAudio();
+      iniciarGravacao();
     });
 
     call.on("left-meeting", () => {
       setConectado(false);
-      pararGravacao();
+      pararTudo();
+    });
+
+    // Quando um participante remoto envia audio, conectamos no mixer
+    call.on("track-started", (event: any) => {
+      if (event.track.kind !== "audio") return;
+      if (event.participant?.local) return; // ignora a propria psicologa
+      conectarAudioRemoto(event.participant.session_id, event.track);
+    });
+
+    call.on("track-stopped", (event: any) => {
+      if (event.track.kind !== "audio") return;
+      desconectarAudioRemoto(event.participant?.session_id);
     });
 
     call.join({ url: roomUrl, token });
 
     return () => {
-      pararGravacao();
+      pararTudo();
       call.destroy();
     };
   }, [roomUrl, token]);
@@ -105,8 +130,7 @@ export default function SessaoVivo({
     return () => clearInterval(t);
   }, [conectado]);
 
-  // Gera resumo a cada 60 segundos enquanto sessao roda
-  // CORRECAO: timer fixo, nao reseta com novas transcricoes
+  // Gera resumo a cada 60s
   useEffect(() => {
     if (!conectado) return;
     const interval = setInterval(() => {
@@ -117,24 +141,75 @@ export default function SessaoVivo({
     return () => clearInterval(interval);
   }, [conectado]);
 
-  function iniciarGravacaoLocal() {
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((stream) => {
-        audioStreamRef.current = stream;
-        gravarChunk(stream);
-      })
-      .catch((err) => {
-        console.error("Erro ao acessar microfone:", err);
+  async function iniciarMixagemAudio() {
+    try {
+      // Cria contexto de audio
+      const audioCtx = new AudioContext();
+      audioContextRef.current = audioCtx;
+
+      // Cria destino que combina todos os audios
+      const destination = audioCtx.createMediaStreamDestination();
+      destinationRef.current = destination;
+
+      // Captura microfone local (psicologa)
+      const localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
       });
+      localMicStreamRef.current = localStream;
+
+      const localSource = audioCtx.createMediaStreamSource(localStream);
+      localSource.connect(destination);
+    } catch (err) {
+      console.error("Erro ao iniciar mixagem:", err);
+    }
+  }
+
+  function conectarAudioRemoto(sessionId: string, track: MediaStreamTrack) {
+    const audioCtx = audioContextRef.current;
+    const destination = destinationRef.current;
+    if (!audioCtx || !destination) return;
+
+    try {
+      const stream = new MediaStream([track]);
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(destination);
+      remoteSourcesRef.current.set(sessionId, source);
+    } catch (err) {
+      console.error("Erro ao conectar audio remoto:", err);
+    }
+  }
+
+  function desconectarAudioRemoto(sessionId: string | undefined) {
+    if (!sessionId) return;
+    const source = remoteSourcesRef.current.get(sessionId);
+    if (source) {
+      try {
+        source.disconnect();
+      } catch (e) {}
+      remoteSourcesRef.current.delete(sessionId);
+    }
+  }
+
+  function iniciarGravacao() {
+    const destination = destinationRef.current;
+    if (!destination) {
+      console.error("Destination nao iniciada");
+      return;
+    }
+    gravarChunk(destination.stream);
   }
 
   function gravarChunk(stream: MediaStream) {
     if (!stream.active) return;
 
-    const recorder = new MediaRecorder(stream, {
-      mimeType: "audio/webm",
-    });
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    } catch (err) {
+      console.error("Erro ao criar MediaRecorder:", err);
+      return;
+    }
+
     mediaRecorderRef.current = recorder;
     audioChunksRef.current = [];
 
@@ -149,7 +224,8 @@ export default function SessaoVivo({
       if (blob.size > 1000) {
         await enviarAudio(blob);
       }
-      if (stream.active) {
+      // Continua gravando proximo chunk se ainda conectado
+      if (stream.active && audioContextRef.current) {
         gravarChunk(stream);
       }
     };
@@ -162,17 +238,31 @@ export default function SessaoVivo({
     }, 30000);
   }
 
-  function pararGravacao() {
+  function pararTudo() {
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state === "recording"
     ) {
       mediaRecorderRef.current.stop();
     }
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((t) => t.stop());
-      audioStreamRef.current = null;
+
+    if (localMicStreamRef.current) {
+      localMicStreamRef.current.getTracks().forEach((t) => t.stop());
+      localMicStreamRef.current = null;
     }
+
+    remoteSourcesRef.current.forEach((source) => {
+      try {
+        source.disconnect();
+      } catch (e) {}
+    });
+    remoteSourcesRef.current.clear();
+
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    destinationRef.current = null;
   }
 
   async function enviarAudio(blob: Blob) {
@@ -180,7 +270,7 @@ export default function SessaoVivo({
       const formData = new FormData();
       formData.append("audio", blob, "audio.webm");
       formData.append("sessao_id", sessaoId);
-      formData.append("timestamp_segundos", tempo.toString());
+      formData.append("timestamp_segundos", tempoRef.current.toString());
 
       const resp = await fetch("/api/sessoes/transcrever", {
         method: "POST",
@@ -235,7 +325,7 @@ export default function SessaoVivo({
     if (!confirm("Encerrar sessao? O resumo e transcricao ficam salvos."))
       return;
 
-    pararGravacao();
+    pararTudo();
 
     if (transcricoesRef.current.length > 0) {
       await gerarResumo();
