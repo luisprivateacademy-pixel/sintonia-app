@@ -12,7 +12,7 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
@@ -33,15 +33,17 @@ export async function middleware(request: NextRequest) {
   const isAuthPage = path.startsWith("/auth");
   const isPublic = path === "/" || isAuthPage;
 
+  // Se não está logado e tenta acessar página privada, manda pro login
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthPage && path !== "/auth/callback") {
+  // Se está logado e tenta entrar em login/cadastro, manda pra home (que decide pra onde ir)
+  if (user && (path === "/auth/login" || path === "/auth/cadastro")) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = "/";
     return NextResponse.redirect(url);
   }
 
@@ -49,5 +51,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };
