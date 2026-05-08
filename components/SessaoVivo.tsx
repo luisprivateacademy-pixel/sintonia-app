@@ -44,7 +44,6 @@ export default function SessaoVivo({
   const videoRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<DailyCall | null>(null);
 
-  // Audio mixing refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const destinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const localMicStreamRef = useRef<MediaStream | null>(null);
@@ -104,10 +103,9 @@ export default function SessaoVivo({
       pararTudo();
     });
 
-    // Quando um participante remoto envia audio, conectamos no mixer
     call.on("track-started", (event: any) => {
       if (event.track.kind !== "audio") return;
-      if (event.participant?.local) return; // ignora a propria psicologa
+      if (event.participant?.local) return;
       conectarAudioRemoto(event.participant.session_id, event.track);
     });
 
@@ -130,7 +128,6 @@ export default function SessaoVivo({
     return () => clearInterval(t);
   }, [conectado]);
 
-  // Gera resumo a cada 60s
   useEffect(() => {
     if (!conectado) return;
     const interval = setInterval(() => {
@@ -143,22 +140,30 @@ export default function SessaoVivo({
 
   async function iniciarMixagemAudio() {
     try {
-      // Cria contexto de audio
       const audioCtx = new AudioContext();
       audioContextRef.current = audioCtx;
 
-      // Cria destino que combina todos os audios
       const destination = audioCtx.createMediaStreamDestination();
       destinationRef.current = destination;
 
-      // Captura microfone local (psicologa)
+      // Microfone local com filtros de qualidade ativados
       const localStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+        },
       });
       localMicStreamRef.current = localStream;
 
       const localSource = audioCtx.createMediaStreamSource(localStream);
-      localSource.connect(destination);
+
+      // Aplica ganho leve no microfone local pra equalizar volumes
+      const localGain = audioCtx.createGain();
+      localGain.gain.value = 0.8;
+      localSource.connect(localGain);
+      localGain.connect(destination);
     } catch (err) {
       console.error("Erro ao iniciar mixagem:", err);
     }
@@ -172,7 +177,13 @@ export default function SessaoVivo({
     try {
       const stream = new MediaStream([track]);
       const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(destination);
+
+      // Ganho no audio remoto pra ficar parelho com o local
+      const remoteGain = audioCtx.createGain();
+      remoteGain.gain.value = 1.0;
+      source.connect(remoteGain);
+      remoteGain.connect(destination);
+
       remoteSourcesRef.current.set(sessionId, source);
     } catch (err) {
       console.error("Erro ao conectar audio remoto:", err);
@@ -204,7 +215,11 @@ export default function SessaoVivo({
 
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      // Bitrate maior pra qualidade superior
+      recorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm",
+        audioBitsPerSecond: 128000,
+      });
     } catch (err) {
       console.error("Erro ao criar MediaRecorder:", err);
       return;
@@ -224,7 +239,6 @@ export default function SessaoVivo({
       if (blob.size > 1000) {
         await enviarAudio(blob);
       }
-      // Continua gravando proximo chunk se ainda conectado
       if (stream.active && audioContextRef.current) {
         gravarChunk(stream);
       }
