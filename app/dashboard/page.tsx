@@ -7,10 +7,12 @@ import {
   Clock,
   ChevronRight,
   ArrowRight,
+  Video,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import Logo from "@/components/Logo";
 import LogoutButton from "@/components/LogoutButton";
+import IniciarSessaoButton from "@/components/IniciarSessaoButton";
 
 export const dynamic = "force-dynamic";
 
@@ -122,87 +124,5 @@ export default async function DashboardPage() {
 
           <div className="grid grid-cols-4 gap-4 mb-8">
             {[
-              {
-                label: "Pacientes ativos",
-                valor: totalPacientes,
-                icone: Users,
-              },
-              { label: "Sessoes esta semana", valor: 0, icone: Calendar },
-              { label: "Insights gerados", valor: "—", icone: Brain },
-              { label: "Tempo em sessao", valor: "0h", icone: Clock },
-            ].map((m, i) => {
-              const Icon = m.icone;
-              return (
-                <div
-                  key={i}
-                  className="bg-white/80 rounded-2xl p-5 border border-lavender-300/20"
-                >
-                  <div className="p-2 rounded-lg bg-lavender-200/30 inline-block mb-3">
-                    <Icon size={18} className="text-lavender-700" />
-                  </div>
-                  <div className="text-3xl mb-1 font-serif text-lavender-800">
-                    {m.valor}
-                  </div>
-                  <div className="text-xs text-lavender-700">{m.label}</div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="bg-white/80 rounded-2xl p-6 border border-lavender-300/20">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-serif text-2xl text-lavender-800">
-                Pacientes
-              </h3>
-              <Link
-                href="/pacientes"
-                className="text-xs flex items-center gap-1 text-lavender-600"
-              >
-                <span>Ver todos</span>
-                <ArrowRight size={12} />
-              </Link>
-            </div>
-
-            {!pacientes || pacientes.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-sm italic text-lavender-600 mb-2">
-                  Voce ainda nao tem pacientes vinculados.
-                </p>
-                <p className="text-xs text-lavender-500">
-                  Compartilhe o link de cadastro com seus pacientes para que
-                  eles possam criar conta e te selecionar.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {pacientes.slice(0, 5).map((p) => (
-                  <Link
-                    key={p.id}
-                    href={"/pacientes/" + p.id}
-                    className="flex items-center gap-4 p-3 rounded-xl hover:bg-white/60 transition-all"
-                  >
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-white font-medium font-serif"
-                      style={{ background: "#a78bca" }}
-                    >
-                      {p.nome_completo[0]}
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-lavender-800">
-                        {p.nome_completo}
-                      </div>
-                      <div className="text-xs text-lavender-600">
-                        {p.email}
-                      </div>
-                    </div>
-                    <ChevronRight size={16} className="text-lavender-400" />
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
+              { label: "Pacientes ativos", valor: totalPacientes, icone: Users },
+              { label: "Sessoes esta semana", valor: 0, ic
