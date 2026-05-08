@@ -41,11 +41,37 @@ export default async function DashboardPage() {
   const inicioSemana = new Date();
   inicioSemana.setDate(inicioSemana.getDate() - 7);
 
-  const { count: sessoesSemana } = await supabase
+  // Pega sessoes da semana com horarios pra calcular tempo real
+  const { data: sessoesSemanaData } = await supabase
     .from("sessoes")
-    .select("*", { count: "exact", head: true })
+    .select("iniciada_em, finalizada_em, status")
     .eq("psicologa_id", user.id)
     .gte("data_agendada", inicioSemana.toISOString());
+
+  const sessoesSemana = sessoesSemanaData?.length ?? 0;
+
+  // Calcula tempo total em segundos somando duracao de cada sessao concluida
+  let tempoTotalSegundos = 0;
+  (sessoesSemanaData || []).forEach((s) => {
+    if (s.iniciada_em && s.finalizada_em) {
+      const inicio = new Date(s.iniciada_em).getTime();
+      const fim = new Date(s.finalizada_em).getTime();
+      tempoTotalSegundos += Math.round((fim - inicio) / 1000);
+    }
+  });
+
+  // Formata o tempo
+  function formatarTempo(segundos: number) {
+    if (segundos === 0) return "0min";
+    const horas = Math.floor(segundos / 3600);
+    const minutos = Math.floor((segundos % 3600) / 60);
+    if (horas > 0) {
+      return horas + "h" + (minutos > 0 ? minutos + "m" : "");
+    }
+    return minutos + "min";
+  }
+
+  const tempoFormatado = formatarTempo(tempoTotalSegundos);
 
   const { count: totalInsights } = await supabase
     .from("resumos_ia")
@@ -148,7 +174,7 @@ export default async function DashboardPage() {
                 <Calendar size={18} className="text-lavender-700" />
               </div>
               <div className="text-3xl mb-1 font-serif text-lavender-800">
-                {sessoesSemana ?? 0}
+                {sessoesSemana}
               </div>
               <div className="text-xs text-lavender-700">Sessoes esta semana</div>
             </div>
@@ -168,7 +194,7 @@ export default async function DashboardPage() {
                 <Clock size={18} className="text-lavender-700" />
               </div>
               <div className="text-3xl mb-1 font-serif text-lavender-800">
-                {sessoesSemana ? sessoesSemana * 50 + "min" : "0h"}
+                {tempoFormatado}
               </div>
               <div className="text-xs text-lavender-700">Tempo em sessao</div>
             </div>
