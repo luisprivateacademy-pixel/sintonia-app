@@ -1,14 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Lock, Shield, Eye, ChevronLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import Logo from "@/components/Logo";
 
 export default function LoginPage() {
-  const router = useRouter();
   const supabase = createClient();
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
@@ -26,27 +24,17 @@ export default function LoginPage() {
     });
 
     if (error) {
-      setErro(
-        error.message === "Invalid login credentials"
-          ? "E-mail ou senha incorretos."
-          : "Erro ao entrar. Tente novamente."
-      );
+      if (error.message === "Invalid login credentials") {
+        setErro("E-mail ou senha incorretos.");
+      } else {
+        setErro("Erro ao entrar. Tente novamente.");
+      }
       setCarregando(false);
       return;
     }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-      router.push(profile?.role === "psicologa" ? "/dashboard" : "/paciente");
-      router.refresh();
-    }
+    // Forca reload completo pra atualizar sessao
+    window.location.href = "/";
   }
 
   return (
@@ -56,10 +44,11 @@ export default function LoginPage() {
           href="/"
           className="flex items-center gap-2 mb-6 text-sm text-lavender-600"
         >
-          <ChevronLeft size={16} /> Voltar
+          <ChevronLeft size={16} />
+          <span>Voltar</span>
         </Link>
 
-        <div className="bg-white/80 backdrop-blur-md rounded-3xl p-8 shadow-2xl border border-lavender-300/30">
+        <div className="bg-white/80 rounded-3xl p-8 shadow-2xl border border-lavender-300/30">
           <div className="text-center mb-6">
             <div className="flex justify-center">
               <Logo size="md" />
@@ -85,6 +74,7 @@ export default function LoginPage() {
                 className="w-full mt-1 px-4 py-3 rounded-xl bg-white/60 border border-lavender-300/50 text-lavender-800"
               />
             </div>
+
             <div>
               <label className="text-xs uppercase tracking-wider text-lavender-600">
                 Senha
@@ -94,7 +84,6 @@ export default function LoginPage() {
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
                 required
-                placeholder="••••••••"
                 className="w-full mt-1 px-4 py-3 rounded-xl bg-white/60 border border-lavender-300/50 text-lavender-800"
               />
             </div>
@@ -108,7 +97,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={carregando}
-              className="w-full py-3.5 rounded-xl font-medium tracking-wide transition-all disabled:opacity-50 hover:shadow-lg text-cream"
+              className="w-full py-3 rounded-xl font-medium text-cream disabled:opacity-50"
               style={{
                 background: "linear-gradient(135deg, #7a5d8e 0%, #5d4470 100%)",
               }}
@@ -122,20 +111,23 @@ export default function LoginPage() {
               href="/auth/cadastro"
               className="text-sm text-lavender-600 hover:underline"
             >
-              Não tem conta? Criar uma
+              Nao tem conta? Criar uma
             </Link>
           </div>
         </div>
 
         <div className="text-center mt-6 text-xs flex items-center justify-center gap-4 text-lavender-600">
           <span className="flex items-center gap-1">
-            <Lock size={11} /> Seguro
+            <Lock size={11} />
+            <span>Seguro</span>
           </span>
           <span className="flex items-center gap-1">
-            <Shield size={11} /> Ético
+            <Shield size={11} />
+            <span>Etico</span>
           </span>
           <span className="flex items-center gap-1">
-            <Eye size={11} /> Sigiloso
+            <Eye size={11} />
+            <span>Sigiloso</span>
           </span>
         </div>
       </div>

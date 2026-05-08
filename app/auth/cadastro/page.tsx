@@ -1,16 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Heart, Stethoscope, Shield } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Heart,
+  Stethoscope,
+  Shield,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import Logo from "@/components/Logo";
 
 type UserRole = "psicologa" | "paciente";
 
 export default function CadastroPage() {
-  const router = useRouter();
   const supabase = createClient();
   const [tipo, setTipo] = useState<UserRole | null>(null);
   const [nome, setNome] = useState("");
@@ -27,47 +31,66 @@ export default function CadastroPage() {
     setErro("");
     setCarregando(true);
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password: senha,
-      options: {
-        data: {
-          nome_completo: nome,
-          role: tipo,
-          aceite_lgpd: true,
-          crp: tipo === "psicologa" ? crp : null,
+    try {
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: senha,
+        options: {
+          data: {
+            nome_completo: nome,
+            role: tipo,
+            aceite_lgpd: true,
+          },
         },
-      },
-    });
+      });
 
-    if (signUpError) {
-      setErro(
-        signUpError.message.includes("already registered")
-          ? "Este e-mail ja esta cadastrado. Tente entrar."
-          : "Erro ao cadastrar: " + signUpError.message
-      );
-      setCarregando(false);
-      return;
-    }
-
-    if (data.session) {
-      if (tipo === "psicologa" && crp && data.user) {
-        await supabase.from("profiles").update({ crp }).eq("id", data.user.id);
+      if (signUpError) {
+        if (signUpError.message.includes("already registered")) {
+          setErro("Este e-mail ja esta cadastrado. Tente entrar.");
+        } else {
+          setErro("Erro ao cadastrar: " + signUpError.message);
+        }
+        setCarregando(false);
+        return;
       }
-      router.push("/");
-      router.refresh();
-      return;
-    }
 
-    setErro("Conta criada. Verifique seu e-mail para confirmar e fazer login.");
-    setCarregando(false);
+      if (!data.user) {
+        setErro("Erro inesperado ao criar conta. Tente novamente.");
+        setCarregando(false);
+        return;
+      }
+
+      // Aguarda 1.5s pro trigger do banco criar o profile
+      await new Promise((r) => setTimeout(r, 1500));
+
+      // Atualiza CRP se for psicologa
+      if (tipo === "psicologa" && crp) {
+        await supabase
+          .from("profiles")
+          .update({ crp })
+          .eq("id", data.user.id);
+      }
+
+      // Redireciona com reload completo
+      if (tipo === "psicologa") {
+        window.location.href = "/dashboard";
+      } else {
+        window.location.href = "/paciente";
+      }
+    } catch (err: any) {
+      setErro("Erro: " + (err?.message || "tente novamente"));
+      setCarregando(false);
+    }
   }
 
   if (!tipo) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="max-w-md w-full">
-          <Link href="/auth/login" className="flex items-center gap-2 mb-6 text-sm text-lavender-600">
+          <Link
+            href="/auth/login"
+            className="flex items-center gap-2 mb-6 text-sm text-lavender-600"
+          >
             <ChevronLeft size={16} />
             <span>Voltar</span>
           </Link>
@@ -76,22 +99,30 @@ export default function CadastroPage() {
             <div className="flex justify-center mb-4">
               <Logo size="lg" />
             </div>
-            <h1 className="text-3xl font-serif text-lavender-800">Criar conta</h1>
-            <p className="text-sm mt-2 text-lavender-600">Como voce vai usar o Sintonia?</p>
+            <h1 className="text-3xl font-serif text-lavender-800">
+              Criar conta
+            </h1>
+            <p className="text-sm mt-2 text-lavender-600">
+              Como voce vai usar o Sintonia?
+            </p>
           </div>
 
           <div className="space-y-4">
             <button
               onClick={() => setTipo("psicologa")}
-              className="w-full p-6 rounded-2xl text-left bg-white/70 backdrop-blur-md border border-lavender-300/30 hover:scale-[1.02] hover:shadow-xl transition-all"
+              className="w-full p-6 rounded-2xl text-left bg-white/70 border border-lavender-300/30 hover:shadow-xl transition-all"
             >
               <div className="flex items-center gap-4">
                 <div className="p-3 rounded-full bg-lavender-200/40">
                   <Stethoscope size={24} className="text-lavender-700" />
                 </div>
                 <div className="flex-1">
-                  <div className="font-serif text-xl text-lavender-800">Sou psicologa</div>
-                  <div className="text-xs mt-0.5 text-lavender-600">Quero acompanhar meus pacientes</div>
+                  <div className="font-serif text-xl text-lavender-800">
+                    Sou psicologa
+                  </div>
+                  <div className="text-xs mt-1 text-lavender-600">
+                    Quero acompanhar meus pacientes
+                  </div>
                 </div>
                 <ChevronRight size={20} className="text-lavender-400" />
               </div>
@@ -99,15 +130,19 @@ export default function CadastroPage() {
 
             <button
               onClick={() => setTipo("paciente")}
-              className="w-full p-6 rounded-2xl text-left bg-white/70 backdrop-blur-md border border-lavender-300/30 hover:scale-[1.02] hover:shadow-xl transition-all"
+              className="w-full p-6 rounded-2xl text-left bg-white/70 border border-lavender-300/30 hover:shadow-xl transition-all"
             >
               <div className="flex items-center gap-4">
                 <div className="p-3 rounded-full bg-lavender-200/40">
                   <Heart size={24} className="text-lavender-700" />
                 </div>
                 <div className="flex-1">
-                  <div className="font-serif text-xl text-lavender-800">Sou paciente</div>
-                  <div className="text-xs mt-0.5 text-lavender-600">Quero fazer terapia</div>
+                  <div className="font-serif text-xl text-lavender-800">
+                    Sou paciente
+                  </div>
+                  <div className="text-xs mt-1 text-lavender-600">
+                    Quero fazer terapia
+                  </div>
                 </div>
                 <ChevronRight size={20} className="text-lavender-400" />
               </div>
@@ -129,7 +164,7 @@ export default function CadastroPage() {
           <span>Voltar</span>
         </button>
 
-        <div className="bg-white/80 backdrop-blur-md rounded-3xl p-8 shadow-2xl border border-lavender-300/30">
+        <div className="bg-white/80 rounded-3xl p-8 shadow-2xl border border-lavender-300/30">
           <div className="text-center mb-6">
             <Logo size="md" />
             <h2 className="text-2xl mt-3 font-serif text-lavender-800">
@@ -139,7 +174,9 @@ export default function CadastroPage() {
 
           <form onSubmit={handleCadastro} className="space-y-4">
             <div>
-              <label className="text-xs uppercase tracking-wider text-lavender-600">Nome completo</label>
+              <label className="text-xs uppercase tracking-wider text-lavender-600">
+                Nome completo
+              </label>
               <input
                 type="text"
                 value={nome}
@@ -151,7 +188,9 @@ export default function CadastroPage() {
 
             {tipo === "psicologa" && (
               <div>
-                <label className="text-xs uppercase tracking-wider text-lavender-600">CRP</label>
+                <label className="text-xs uppercase tracking-wider text-lavender-600">
+                  CRP
+                </label>
                 <input
                   type="text"
                   value={crp}
@@ -164,7 +203,9 @@ export default function CadastroPage() {
             )}
 
             <div>
-              <label className="text-xs uppercase tracking-wider text-lavender-600">E-mail</label>
+              <label className="text-xs uppercase tracking-wider text-lavender-600">
+                E-mail
+              </label>
               <input
                 type="email"
                 value={email}
@@ -175,7 +216,9 @@ export default function CadastroPage() {
             </div>
 
             <div>
-              <label className="text-xs uppercase tracking-wider text-lavender-600">Senha</label>
+              <label className="text-xs uppercase tracking-wider text-lavender-600">
+                Senha
+              </label>
               <input
                 type="password"
                 value={senha}
@@ -195,7 +238,9 @@ export default function CadastroPage() {
                 className="mt-1"
               />
               <span className="text-xs leading-relaxed text-lavender-700">
-                Li e concordo com a Politica de Privacidade, Termos de Uso e Termo de Consentimento LGPD para tratamento de dados sensiveis de saude mental.
+                Li e concordo com a Politica de Privacidade, Termos de Uso e
+                Termo de Consentimento LGPD para tratamento de dados sensiveis
+                de saude mental.
               </span>
             </label>
 
@@ -208,7 +253,7 @@ export default function CadastroPage() {
             <button
               type="submit"
               disabled={carregando || !aceiteLgpd}
-              className="w-full py-3.5 rounded-xl font-medium tracking-wide transition-all disabled:opacity-50 hover:shadow-lg text-cream"
+              className="w-full py-3 rounded-xl font-medium text-cream disabled:opacity-50"
               style={{
                 background: "linear-gradient(135deg, #7a5d8e 0%, #5d4470 100%)",
               }}

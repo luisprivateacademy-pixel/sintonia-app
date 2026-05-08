@@ -10,22 +10,5 @@ export async function GET(request: Request) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
-    return NextResponse.redirect(
-      `${origin}${profile?.role === "psicologa" ? "/dashboard" : "/paciente"}`
-    );
-  }
-
-  return NextResponse.redirect(`${origin}/auth/login`);
+  return NextResponse.redirect(`${origin}/`);
 }

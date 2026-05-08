@@ -13,6 +13,7 @@ body {
   color: #3d2a4d;
   background: linear-gradient(135deg, #f5f0ea 0%, #ebe2e8 50%, #d4c2dc 100%);
   min-height: 100vh;
+  margin: 0;
 }
 
 input,
@@ -37,22 +38,4 @@ textarea:focus {
 ::-webkit-scrollbar-thumb {
   background: rgba(167, 139, 202, 0.3);
   border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(167, 139, 202, 0.5);
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in {
-  animation: fade-in 0.5s ease-out;
 }

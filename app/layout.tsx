@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Sintonia",
-  description: "Sua prática. Sua essência. Em sintonia.",
+  description: "Sua pratica. Sua essencia. Em sintonia.",
 };
 
 export default function RootLayout({
