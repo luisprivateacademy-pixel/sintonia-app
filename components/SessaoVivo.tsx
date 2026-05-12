@@ -15,6 +15,7 @@ import {
   Save,
   CheckCircle2,
   Brain,
+  AlertCircle,
 } from "lucide-react";
 import DailyIframe, { DailyCall } from "@daily-co/daily-js";
 
@@ -51,11 +52,9 @@ export default function SessaoVivo({
     new Map()
   );
 
-  // Gravador de chunks de 30s pra transcricao em tempo real (Groq)
   const chunkRecorderRef = useRef<MediaRecorder | null>(null);
   const chunkChunksRef = useRef<Blob[]>([]);
 
-  // Gravador da sessao inteira pra AssemblyAI no final
   const sessaoRecorderRef = useRef<MediaRecorder | null>(null);
   const sessaoChunksRef = useRef<Blob[]>([]);
 
@@ -74,7 +73,16 @@ export default function SessaoVivo({
   const [notas, setNotas] = useState("");
   const [salvandoNotas, setSalvandoNotas] = useState(false);
   const [processandoFinal, setProcessandoFinal] = useState(false);
-  const [statusEncerramento, setStatusEncerramento] = useState("");
+  const [logsProcessamento, setLogsProcessamento] = useState<string[]>([]);
+  const [erroProcessamento, setErroProcessamento] = useState<string | null>(
+    null
+  );
+  const [processamentoCompleto, setProcessamentoCompleto] = useState(false);
+
+  function adicionarLog(msg: string) {
+    console.log("[Encerramento]", msg);
+    setLogsProcessamento((logs) => [...logs, msg]);
+  }
 
   useEffect(() => {
     transcricoesRef.current = transcricoes;
@@ -125,7 +133,7 @@ export default function SessaoVivo({
     call.join({ url: roomUrl, token });
 
     return () => {
-      pararTudo();
+      pararRecursosAudio();
       call.destroy();
     };
   }, [roomUrl, token]);
@@ -237,7 +245,7 @@ export default function SessaoVivo({
       if (blob.size > 1000) {
         await enviarChunkParaTranscricao(blob);
       }
-      if (stream.active && audioContextRef.current) {
+      if (stream.active && audioContextRef.current && !processandoFinal) {
         gravarChunk(stream);
       }
     };
@@ -255,7 +263,6 @@ export default function SessaoVivo({
     if (!destination) return;
 
     try {
-      // Bitrate menor pra arquivo nao ficar gigante (audio falado nao precisa de muito)
       const recorder = new MediaRecorder(destination.stream, {
         mimeType: "audio/webm",
         audioBitsPerSecond: 64000,
@@ -270,28 +277,14 @@ export default function SessaoVivo({
         }
       };
 
-      // Coleta dados a cada 5 segundos pra nao perder tudo se der erro
-      recorder.start(5000);
+      // Coleta dados a cada 1 segundo pra garantir que tudo seja salvo
+      recorder.start(1000);
     } catch (err) {
       console.error("Erro ao iniciar gravacao da sessao completa:", err);
     }
   }
 
-  function pararTudo() {
-    if (
-      chunkRecorderRef.current &&
-      chunkRecorderRef.current.state === "recording"
-    ) {
-      chunkRecorderRef.current.stop();
-    }
-
-    if (
-      sessaoRecorderRef.current &&
-      sessaoRecorderRef.current.state === "recording"
-    ) {
-      sessaoRecorderRef.current.stop();
-    }
-
+  function pararRecursosAudio() {
     if (localMicStreamRef.current) {
       localMicStreamRef.current.getTracks().forEach((t) => t.stop());
       localMicStreamRef.current = null;
@@ -367,59 +360,48 @@ export default function SessaoVivo({
     setSalvandoNotas(false);
   }
 
-  async function processarTranscricaoFinal(): Promise<boolean> {
+  // Para o recorder e ESPERA o ultimo chunk chegar
+  async function pararGravacaoCompletaEObterBlob(): Promise<Blob | null> {
     return new Promise((resolve) => {
       const recorder = sessaoRecorderRef.current;
-      if (!recorder || recorder.state === "inactive") {
-        resolve(false);
+      if (!recorder) {
+        resolve(null);
         return;
       }
 
-      // Espera o ondataavailable final
-      recorder.onstop = async () => {
-        try {
-          const blobCompleto = new Blob(sessaoChunksRef.current, {
+      if (recorder.state === "inactive") {
+        const blob = new Blob(sessaoChunksRef.current, { type: "audio/webm" });
+        resolve(blob);
+        return;
+      }
+
+      // Substitui o onstop temporariamente
+      recorder.onstop = () => {
+        // Espera um tick adicional pra garantir que ondataavailable terminou
+        setTimeout(() => {
+          const blob = new Blob(sessaoChunksRef.current, {
             type: "audio/webm",
           });
-
-          if (blobCompleto.size < 5000) {
-            console.warn("Audio muito curto, pulando AssemblyAI");
-            resolve(false);
-            return;
-          }
-
-          setStatusEncerramento(
-            "Processando transcricao final (pode levar 1-3 min)..."
-          );
-
-          const formData = new FormData();
-          formData.append("audio", blobCompleto, "sessao.webm");
-          formData.append("sessao_id", sessaoId);
-
-          const resp = await fetch("/api/sessoes/transcrever-final", {
-            method: "POST",
-            body: formData,
-          });
-
-          const data = await resp.json();
-          if (data.ok) {
-            console.log(
-              "Transcricao final processada:",
-              data.utterances,
-              "trechos"
-            );
-            resolve(true);
-          } else {
-            console.error("Erro transcricao final:", data.error);
-            resolve(false);
-          }
-        } catch (err) {
-          console.error("Erro processarTranscricaoFinal:", err);
-          resolve(false);
-        }
+          resolve(blob);
+        }, 200);
       };
 
-      recorder.stop();
+      // requestData pede ao navegador todos os dados pendentes
+      try {
+        recorder.requestData();
+      } catch (e) {}
+
+      // Pequeno delay antes do stop pra garantir que o requestData termine
+      setTimeout(() => {
+        try {
+          recorder.stop();
+        } catch (e) {
+          const blob = new Blob(sessaoChunksRef.current, {
+            type: "audio/webm",
+          });
+          resolve(blob);
+        }
+      }, 300);
     });
   }
 
@@ -432,7 +414,10 @@ export default function SessaoVivo({
       return;
 
     setProcessandoFinal(true);
-    setStatusEncerramento("Encerrando gravacao...");
+    setErroProcessamento(null);
+    setLogsProcessamento([]);
+
+    adicionarLog("Encerrando gravacao...");
 
     // Para chunks de tempo real
     if (
@@ -442,32 +427,92 @@ export default function SessaoVivo({
       chunkRecorderRef.current.stop();
     }
 
-    // Processa audio completo com AssemblyAI
-    await processarTranscricaoFinal();
+    adicionarLog("Coletando audio completo da sessao...");
 
-    setStatusEncerramento("Gerando resumo final...");
+    // Para gravacao da sessao completa e pega o blob
+    const blobCompleto = await pararGravacaoCompletaEObterBlob();
 
-    // Gera resumo com base na transcricao boa
+    if (!blobCompleto) {
+      adicionarLog("ERRO: nao foi possivel obter audio");
+      setErroProcessamento(
+        "Nao foi possivel obter o audio da sessao. Tente novamente."
+      );
+      return;
+    }
+
+    const tamanhoMB = (blobCompleto.size / 1024 / 1024).toFixed(2);
+    adicionarLog(`Audio coletado: ${tamanhoMB} MB`);
+
+    if (blobCompleto.size < 5000) {
+      adicionarLog("Audio muito curto, pulando AssemblyAI");
+    } else {
+      adicionarLog("Enviando audio para transcricao final (AssemblyAI)...");
+      adicionarLog("Aguarde 1-3 minutos para o processamento...");
+
+      try {
+        const formData = new FormData();
+        formData.append("audio", blobCompleto, "sessao.webm");
+        formData.append("sessao_id", sessaoId);
+
+        const resp = await fetch("/api/sessoes/transcrever-final", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await resp.json();
+
+        if (data.ok) {
+          adicionarLog(
+            `Transcricao final pronta (${data.utterances} trechos de fala)`
+          );
+        } else {
+          adicionarLog(
+            `Erro na transcricao final: ${data.error || "desconhecido"}`
+          );
+        }
+      } catch (err: any) {
+        adicionarLog(`Erro ao enviar audio: ${err.message || "desconhecido"}`);
+      }
+    }
+
+    adicionarLog("Gerando resumo clinico final...");
+
     if (notas) {
       await salvarNotas();
     }
-    await gerarResumo();
 
-    setStatusEncerramento("Finalizando...");
-
-    // Encerra sessao no banco e na Daily
-    await fetch("/api/sessoes/encerrar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessao_id: sessaoId, room_name: roomName }),
-    });
-
-    pararTudo();
-
-    if (callRef.current) {
-      callRef.current.leave();
+    try {
+      await gerarResumo();
+      adicionarLog("Resumo final salvo no prontuario");
+    } catch (err) {
+      adicionarLog("Aviso: nao foi possivel gerar resumo final");
     }
 
+    adicionarLog("Finalizando sessao...");
+
+    try {
+      await fetch("/api/sessoes/encerrar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessao_id: sessaoId, room_name: roomName }),
+      });
+    } catch (err) {
+      console.error("Erro ao encerrar sessao:", err);
+    }
+
+    adicionarLog("Pronto!");
+    setProcessamentoCompleto(true);
+
+    pararRecursosAudio();
+
+    if (callRef.current) {
+      try {
+        callRef.current.leave();
+      } catch (e) {}
+    }
+  }
+
+  function irParaPaciente() {
     router.push("/pacientes");
   }
 
@@ -510,28 +555,76 @@ export default function SessaoVivo({
     );
   }
 
-  // Tela de processamento ao encerrar
+  // Tela de processamento com logs visuais
   if (processandoFinal) {
     return (
       <div
         className="h-screen flex items-center justify-center p-6"
         style={{ background: "#1a1422" }}
       >
-        <div className="max-w-md text-center">
-          <div className="mb-6">
-            <Sparkles
-              size={48}
-              className="mx-auto text-purple-300 animate-pulse"
-            />
+        <div className="max-w-lg w-full">
+          <div className="text-center mb-8">
+            {erroProcessamento ? (
+              <AlertCircle
+                size={48}
+                className="mx-auto text-red-400 mb-4"
+              />
+            ) : (
+              <Sparkles
+                size={48}
+                className={
+                  "mx-auto text-purple-300 mb-4 " +
+                  (processamentoCompleto ? "" : "animate-pulse")
+                }
+              />
+            )}
+            <h2 className="text-2xl font-serif text-white mb-2">
+              {processamentoCompleto
+                ? "Sessao finalizada"
+                : "Processando sessao"}
+            </h2>
+            <p className="text-sm text-purple-300">
+              {processamentoCompleto
+                ? "Tudo pronto! Voce pode ver o resumo no prontuario do paciente."
+                : "Por favor nao feche esta janela."}
+            </p>
           </div>
-          <h2 className="text-2xl font-serif text-white mb-3">
-            Processando sessao
-          </h2>
-          <p className="text-sm text-purple-300 mb-2">{statusEncerramento}</p>
-          <p className="text-xs text-purple-400 italic mt-4">
-            Por favor nao feche esta janela. A transcricao de alta qualidade
-            esta sendo gerada.
-          </p>
+
+          <div className="bg-purple-950/40 rounded-2xl p-5 mb-6 max-h-80 overflow-y-auto">
+            {logsProcessamento.map((log, i) => (
+              <div
+                key={i}
+                className="text-xs text-purple-200 mb-2 flex items-start gap-2"
+              >
+                <span className="text-purple-400 mt-0.5">{">"}</span>
+                <span>{log}</span>
+              </div>
+            ))}
+          </div>
+
+          {erroProcessamento && (
+            <div className="bg-red-900/30 border border-red-500/30 rounded-xl p-4 mb-4">
+              <p className="text-sm text-red-200">{erroProcessamento}</p>
+            </div>
+          )}
+
+          {processamentoCompleto && (
+            <button
+              onClick={irParaPaciente}
+              className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-medium"
+            >
+              Ver prontuario do paciente
+            </button>
+          )}
+
+          {erroProcessamento && !processamentoCompleto && (
+            <button
+              onClick={() => router.push("/dashboard")}
+              className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-medium"
+            >
+              Voltar ao dashboard
+            </button>
+          )}
         </div>
       </div>
     );
