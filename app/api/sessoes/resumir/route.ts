@@ -23,7 +23,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Confirma que a sessao eh dele
     const { data: sessao } = await supabase
       .from("sessoes")
       .select("id, paciente_id")
@@ -38,10 +37,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Pega todas as transcricoes da sessao
+    // Pega todas as transcricoes com info de falante
     const { data: transcricoes } = await supabase
       .from("transcricoes")
-      .select("conteudo")
+      .select("conteudo, falante, timestamp_segundos")
       .eq("sessao_id", sessao_id)
       .order("timestamp_segundos", { ascending: true });
 
@@ -52,16 +51,30 @@ export async function POST(request: Request) {
       });
     }
 
-    const textoCompleto = transcricoes.map((t) => t.conteudo).join(" ");
+    // Monta texto com diarizacao (Psicologa: ... / Paciente: ...)
+    // Se nao tiver diarizacao (ex: ainda em tempo real), junta tudo
+    const temDiarizacao = transcricoes.some(
+      (t) => t.falante === "psicologa"
+    );
 
-    // Pega contexto do paciente
+    let textoFormatado;
+    if (temDiarizacao) {
+      textoFormatado = transcricoes
+        .map((t) => {
+          const quem = t.falante === "psicologa" ? "PSICOLOGA" : "PACIENTE";
+          return quem + ": " + t.conteudo;
+        })
+        .join("\n");
+    } else {
+      textoFormatado = transcricoes.map((t) => t.conteudo).join(" ");
+    }
+
     const { data: paciente } = await supabase
       .from("profiles")
       .select("nome_completo")
       .eq("id", sessao.paciente_id)
       .maybeSingle();
 
-    // Chama Claude API
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     if (!anthropicKey) {
       return NextResponse.json(
@@ -70,13 +83,40 @@ export async function POST(request: Request) {
       );
     }
 
-    const prompt = `Voce eh uma IA assistente de uma psicologa durante uma sessao de terapia. Analise a transcricao abaixo e gere um resumo clinico estruturado.
+    const promptDiarizado = `Voce eh uma IA assistente clinica de uma psicologa. Analise a transcricao DIARIZADA abaixo (com identificacao de quem falou) e gere um resumo clinico estruturado.
+
+Paciente: ${paciente?.nome_completo || "Paciente"}
+
+Transcricao da sessao:
+"""
+${textoFormatado}
+"""
+
+IMPORTANTE: 
+- Considere o contexto da conversa entre psicologa e paciente
+- Identifique padroes no que o PACIENTE expressa
+- Note as intervencoes da PSICOLOGA quando relevantes
+- Identifique alertas (ideacao suicida, autolesao, riscos) com prioridade
+
+Gere um JSON com a estrutura abaixo, sem markdown e sem texto adicional:
+{
+  "tema_principal": "tema central da sessao em uma frase",
+  "pontos_principais": ["3-5 pontos chave abordados pelo paciente"],
+  "insights": [
+    {"tipo": "padrao|tema|sugestao|alerta", "texto": "descricao", "confianca": 70-95}
+  ],
+  "sugestoes_proxima_sessao": "sugestao em 1-2 frases"
+}
+
+Maximo 4 insights. Use linguagem clinica respeitosa. Confianca de 0-100.`;
+
+    const promptSimples = `Voce eh uma IA assistente clinica de uma psicologa durante uma sessao de terapia. Analise a transcricao abaixo e gere um resumo clinico estruturado.
 
 Paciente: ${paciente?.nome_completo || "Paciente"}
 
 Transcricao da sessao ate o momento:
 """
-${textoCompleto}
+${textoFormatado}
 """
 
 Gere um JSON com a seguinte estrutura, sem markdown, sem texto adicional:
@@ -96,6 +136,8 @@ Confianca de 0 a 100.
 Maximo 4 insights.
 Use linguagem clinica respeitosa.`;
 
+    const prompt = temDiarizacao ? promptDiarizado : promptSimples;
+
     const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -105,7 +147,7 @@ Use linguagem clinica respeitosa.`;
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
+        max_tokens: 1500,
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -122,7 +164,7 @@ Use linguagem clinica respeitosa.`;
     const claudeData = await claudeResp.json();
     const respostaTexto = claudeData.content[0].text;
 
-   let resumoJson;
+    let resumoJson;
     try {
       // Remove markdown code blocks se houver
       let textoLimpo = respostaTexto.trim();
