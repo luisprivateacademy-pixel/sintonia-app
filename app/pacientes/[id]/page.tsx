@@ -11,6 +11,7 @@ import {
   FileText,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import TranscricaoCompleta from "@/components/TranscricaoCompleta";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,6 @@ export default async function PacienteDetalhePage({
 
   if (!paciente) notFound();
 
-  // Busca todas as sessoes desse paciente
   const { data: sessoes } = await supabase
     .from("sessoes")
     .select("*")
@@ -52,19 +52,36 @@ export default async function PacienteDetalhePage({
     .eq("psicologa_id", user.id)
     .order("data_agendada", { ascending: false });
 
-  // Busca os resumos das sessoes
   const sessaoIds = (sessoes || []).map((s) => s.id);
-  const { data: resumos } = sessaoIds.length > 0
-    ? await supabase
-        .from("resumos_ia")
-        .select("*")
-        .in("sessao_id", sessaoIds)
-    : { data: [] };
 
-  // Mapeia resumo por sessao_id
+  const { data: resumos } =
+    sessaoIds.length > 0
+      ? await supabase
+          .from("resumos_ia")
+          .select("*")
+          .in("sessao_id", sessaoIds)
+      : { data: [] };
+
+  const { data: transcricoes } =
+    sessaoIds.length > 0
+      ? await supabase
+          .from("transcricoes")
+          .select("*")
+          .in("sessao_id", sessaoIds)
+          .order("timestamp_segundos", { ascending: true })
+      : { data: [] };
+
   const resumosPorSessao: Record<string, any> = {};
   (resumos || []).forEach((r) => {
     resumosPorSessao[r.sessao_id] = r;
+  });
+
+  const transcricoesPorSessao: Record<string, any[]> = {};
+  (transcricoes || []).forEach((t) => {
+    if (!transcricoesPorSessao[t.sessao_id]) {
+      transcricoesPorSessao[t.sessao_id] = [];
+    }
+    transcricoesPorSessao[t.sessao_id].push(t);
   });
 
   const totalSessoes = sessoes?.length ?? 0;
@@ -171,6 +188,7 @@ export default async function PacienteDetalhePage({
             <div className="space-y-4">
               {sessoes.map((s) => {
                 const resumo = resumosPorSessao[s.id];
+                const transcricoesSessao = transcricoesPorSessao[s.id] || [];
                 const duracao = calcularDuracao(s.iniciada_em, s.finalizada_em);
 
                 return (
@@ -302,10 +320,23 @@ export default async function PacienteDetalhePage({
                             </div>
                           </div>
                         )}
+
+                        {transcricoesSessao.length > 0 && (
+                          <TranscricaoCompleta
+                            trechos={transcricoesSessao}
+                          />
+                        )}
                       </div>
                     ) : (
-                      <div className="text-xs italic text-lavender-500 mt-2">
-                        Sem resumo da IA para esta sessao.
+                      <div className="mt-2">
+                        <div className="text-xs italic text-lavender-500 mb-3">
+                          Sem resumo da IA para esta sessao.
+                        </div>
+                        {transcricoesSessao.length > 0 && (
+                          <TranscricaoCompleta
+                            trechos={transcricoesSessao}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
