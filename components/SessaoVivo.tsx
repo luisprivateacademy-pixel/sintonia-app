@@ -51,8 +51,14 @@ export default function SessaoVivo({
     new Map()
   );
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // Gravador de chunks de 30s pra transcricao em tempo real (Groq)
+  const chunkRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunkChunksRef = useRef<Blob[]>([]);
+
+  // Gravador da sessao inteira pra AssemblyAI no final
+  const sessaoRecorderRef = useRef<MediaRecorder | null>(null);
+  const sessaoChunksRef = useRef<Blob[]>([]);
+
   const transcricoesRef = useRef<string[]>([]);
   const carregandoResumoRef = useRef<boolean>(false);
   const tempoRef = useRef<number>(0);
@@ -67,6 +73,8 @@ export default function SessaoVivo({
   const [carregandoResumo, setCarregandoResumo] = useState(false);
   const [notas, setNotas] = useState("");
   const [salvandoNotas, setSalvandoNotas] = useState(false);
+  const [processandoFinal, setProcessandoFinal] = useState(false);
+  const [statusEncerramento, setStatusEncerramento] = useState("");
 
   useEffect(() => {
     transcricoesRef.current = transcricoes;
@@ -95,12 +103,12 @@ export default function SessaoVivo({
     call.on("joined-meeting", async () => {
       setConectado(true);
       await iniciarMixagemAudio();
-      iniciarGravacao();
+      iniciarGravacaoChunks();
+      iniciarGravacaoSessaoCompleta();
     });
 
     call.on("left-meeting", () => {
       setConectado(false);
-      pararTudo();
     });
 
     call.on("track-started", (event: any) => {
@@ -146,7 +154,6 @@ export default function SessaoVivo({
       const destination = audioCtx.createMediaStreamDestination();
       destinationRef.current = destination;
 
-      // Microfone local com filtros de qualidade ativados
       const localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -158,8 +165,6 @@ export default function SessaoVivo({
       localMicStreamRef.current = localStream;
 
       const localSource = audioCtx.createMediaStreamSource(localStream);
-
-      // Aplica ganho leve no microfone local pra equalizar volumes
       const localGain = audioCtx.createGain();
       localGain.gain.value = 0.8;
       localSource.connect(localGain);
@@ -177,13 +182,10 @@ export default function SessaoVivo({
     try {
       const stream = new MediaStream([track]);
       const source = audioCtx.createMediaStreamSource(stream);
-
-      // Ganho no audio remoto pra ficar parelho com o local
       const remoteGain = audioCtx.createGain();
       remoteGain.gain.value = 1.0;
       source.connect(remoteGain);
       remoteGain.connect(destination);
-
       remoteSourcesRef.current.set(sessionId, source);
     } catch (err) {
       console.error("Erro ao conectar audio remoto:", err);
@@ -201,12 +203,9 @@ export default function SessaoVivo({
     }
   }
 
-  function iniciarGravacao() {
+  function iniciarGravacaoChunks() {
     const destination = destinationRef.current;
-    if (!destination) {
-      console.error("Destination nao iniciada");
-      return;
-    }
+    if (!destination) return;
     gravarChunk(destination.stream);
   }
 
@@ -215,7 +214,6 @@ export default function SessaoVivo({
 
     let recorder: MediaRecorder;
     try {
-      // Bitrate maior pra qualidade superior
       recorder = new MediaRecorder(stream, {
         mimeType: "audio/webm",
         audioBitsPerSecond: 128000,
@@ -225,19 +223,19 @@ export default function SessaoVivo({
       return;
     }
 
-    mediaRecorderRef.current = recorder;
-    audioChunksRef.current = [];
+    chunkRecorderRef.current = recorder;
+    chunkChunksRef.current = [];
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
-        audioChunksRef.current.push(e.data);
+        chunkChunksRef.current.push(e.data);
       }
     };
 
     recorder.onstop = async () => {
-      const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      const blob = new Blob(chunkChunksRef.current, { type: "audio/webm" });
       if (blob.size > 1000) {
-        await enviarAudio(blob);
+        await enviarChunkParaTranscricao(blob);
       }
       if (stream.active && audioContextRef.current) {
         gravarChunk(stream);
@@ -252,12 +250,46 @@ export default function SessaoVivo({
     }, 30000);
   }
 
+  function iniciarGravacaoSessaoCompleta() {
+    const destination = destinationRef.current;
+    if (!destination) return;
+
+    try {
+      // Bitrate menor pra arquivo nao ficar gigante (audio falado nao precisa de muito)
+      const recorder = new MediaRecorder(destination.stream, {
+        mimeType: "audio/webm",
+        audioBitsPerSecond: 64000,
+      });
+
+      sessaoRecorderRef.current = recorder;
+      sessaoChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          sessaoChunksRef.current.push(e.data);
+        }
+      };
+
+      // Coleta dados a cada 5 segundos pra nao perder tudo se der erro
+      recorder.start(5000);
+    } catch (err) {
+      console.error("Erro ao iniciar gravacao da sessao completa:", err);
+    }
+  }
+
   function pararTudo() {
     if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state === "recording"
+      chunkRecorderRef.current &&
+      chunkRecorderRef.current.state === "recording"
     ) {
-      mediaRecorderRef.current.stop();
+      chunkRecorderRef.current.stop();
+    }
+
+    if (
+      sessaoRecorderRef.current &&
+      sessaoRecorderRef.current.state === "recording"
+    ) {
+      sessaoRecorderRef.current.stop();
     }
 
     if (localMicStreamRef.current) {
@@ -279,7 +311,7 @@ export default function SessaoVivo({
     destinationRef.current = null;
   }
 
-  async function enviarAudio(blob: Blob) {
+  async function enviarChunkParaTranscricao(blob: Blob) {
     try {
       const formData = new FormData();
       formData.append("audio", blob, "audio.webm");
@@ -296,7 +328,7 @@ export default function SessaoVivo({
         setTranscricoes((t) => [...t, data.texto]);
       }
     } catch (err) {
-      console.error("Erro ao enviar audio:", err);
+      console.error("Erro ao enviar chunk:", err);
     }
   }
 
@@ -335,31 +367,108 @@ export default function SessaoVivo({
     setSalvandoNotas(false);
   }
 
+  async function processarTranscricaoFinal(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const recorder = sessaoRecorderRef.current;
+      if (!recorder || recorder.state === "inactive") {
+        resolve(false);
+        return;
+      }
+
+      // Espera o ondataavailable final
+      recorder.onstop = async () => {
+        try {
+          const blobCompleto = new Blob(sessaoChunksRef.current, {
+            type: "audio/webm",
+          });
+
+          if (blobCompleto.size < 5000) {
+            console.warn("Audio muito curto, pulando AssemblyAI");
+            resolve(false);
+            return;
+          }
+
+          setStatusEncerramento(
+            "Processando transcricao final (pode levar 1-3 min)..."
+          );
+
+          const formData = new FormData();
+          formData.append("audio", blobCompleto, "sessao.webm");
+          formData.append("sessao_id", sessaoId);
+
+          const resp = await fetch("/api/sessoes/transcrever-final", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await resp.json();
+          if (data.ok) {
+            console.log(
+              "Transcricao final processada:",
+              data.utterances,
+              "trechos"
+            );
+            resolve(true);
+          } else {
+            console.error("Erro transcricao final:", data.error);
+            resolve(false);
+          }
+        } catch (err) {
+          console.error("Erro processarTranscricaoFinal:", err);
+          resolve(false);
+        }
+      };
+
+      recorder.stop();
+    });
+  }
+
   async function encerrar() {
-    if (!confirm("Encerrar sessao? O resumo e transcricao ficam salvos."))
+    if (
+      !confirm(
+        "Encerrar sessao? A transcricao sera processada com qualidade superior - pode levar 1-3 minutos."
+      )
+    )
       return;
 
-    pararTudo();
+    setProcessandoFinal(true);
+    setStatusEncerramento("Encerrando gravacao...");
 
-    if (transcricoesRef.current.length > 0) {
-      await gerarResumo();
+    // Para chunks de tempo real
+    if (
+      chunkRecorderRef.current &&
+      chunkRecorderRef.current.state === "recording"
+    ) {
+      chunkRecorderRef.current.stop();
     }
 
+    // Processa audio completo com AssemblyAI
+    await processarTranscricaoFinal();
+
+    setStatusEncerramento("Gerando resumo final...");
+
+    // Gera resumo com base na transcricao boa
     if (notas) {
       await salvarNotas();
     }
+    await gerarResumo();
 
+    setStatusEncerramento("Finalizando...");
+
+    // Encerra sessao no banco e na Daily
     await fetch("/api/sessoes/encerrar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessao_id: sessaoId, room_name: roomName }),
     });
 
+    pararTudo();
+
     if (callRef.current) {
       callRef.current.leave();
     }
 
-    router.push("/dashboard");
+    router.push("/pacientes");
   }
 
   function formatTempo(s: number) {
@@ -396,6 +505,33 @@ export default function SessaoVivo({
           >
             Voltar
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela de processamento ao encerrar
+  if (processandoFinal) {
+    return (
+      <div
+        className="h-screen flex items-center justify-center p-6"
+        style={{ background: "#1a1422" }}
+      >
+        <div className="max-w-md text-center">
+          <div className="mb-6">
+            <Sparkles
+              size={48}
+              className="mx-auto text-purple-300 animate-pulse"
+            />
+          </div>
+          <h2 className="text-2xl font-serif text-white mb-3">
+            Processando sessao
+          </h2>
+          <p className="text-sm text-purple-300 mb-2">{statusEncerramento}</p>
+          <p className="text-xs text-purple-400 italic mt-4">
+            Por favor nao feche esta janela. A transcricao de alta qualidade
+            esta sendo gerada.
+          </p>
         </div>
       </div>
     );
@@ -507,7 +643,7 @@ export default function SessaoVivo({
                   <span className="italic">
                     {carregandoResumo
                       ? "IA processando..."
-                      : "IA atualizando a cada minuto"}
+                      : "Resumo final sera gerado ao encerrar"}
                   </span>
                 </div>
 
@@ -604,7 +740,8 @@ export default function SessaoVivo({
               <div className="space-y-3">
                 {transcricoes.length === 0 ? (
                   <div className="text-center py-12 text-sm italic text-purple-500">
-                    A transcricao aparecera aqui em tempo real...
+                    A transcricao aparecera aqui em tempo real. A versao final
+                    de alta qualidade sera gerada ao encerrar a sessao.
                   </div>
                 ) : (
                   transcricoes.map((t, i) => (
